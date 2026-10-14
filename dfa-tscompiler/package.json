@@ -11,9 +11,12 @@
     "test:automata": "tsx scripts/automata-tests.ts",
     "test:parity": "tsx scripts/parity.ts",
     "test:e2e": "tsx scripts/e2e-tests.ts",
+    "test:demo": "tsx scripts/demo-tests.ts",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
-    "demo:record": "webreel record && ffmpeg -y -i videos/automata-workbench-demo.mp4 -vf \"fps=15,scale=1280:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer:bayer_scale=3\" videos/automata-workbench-demo.gif",
+    "demo:record": "tsx scripts/demo-cinema.ts",
+    "demo:render": "tsx scripts/demo-cinema.ts --render-only",
+    "demo:validate": "webreel validate",
     "demo:preview": "webreel preview"
   },
   "dependencies": {
@@ -36,6 +39,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.2.0",
+    "@webreel/core": "0.1.4",
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",

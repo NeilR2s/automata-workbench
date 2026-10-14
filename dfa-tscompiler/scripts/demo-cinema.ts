@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -122,7 +122,17 @@ async function main() {
     console.log(
       "Recording cinematic showcase (using Webreel's managed Chrome)…"
     )
-    capture = await captureDemo(root, work, video, configHash)
+    capture = await captureDemo(root, work, video, configHash, async (path) => {
+      const frame = await probe(ffmpeg, path)
+      if (
+        frame.width !== dimensions.width ||
+        frame.height !== dimensions.height
+      ) {
+        throw new Error(
+          `Chrome frame size is ${frame.width}×${frame.height}; expected ${dimensions.width}×${dimensions.height}`
+        )
+      }
+    })
   }
   const raw = await probe(ffmpeg, join(work, "raw.mp4"))
   if (
@@ -140,16 +150,45 @@ async function main() {
   const timeline = JSON.parse(
     await readFile(join(work, "timeline.json"), "utf8")
   ) as TimelineData
+  if (
+    Math.abs(timeline.frames.length - raw.frames) > 1 ||
+    timeline.width !== capture.width ||
+    timeline.height !== capture.height ||
+    timeline.fps !== capture.fps
+  ) {
+    throw new Error("Cached cursor timeline does not match the capture")
+  }
   timeline.frames = timeline.frames.slice(0, raw.frames)
   await writeFile(join(work, "capture.json"), JSON.stringify(capture, null, 2))
   const shots = direct(capture)
   await writeFile(join(work, "shots.json"), JSON.stringify(shots, null, 2))
+  let reuseCursor = false
+  if (flags.includes("--render-only")) {
+    try {
+      const [source, cursor, overlay] = await Promise.all([
+        stat(join(work, "raw.mp4")),
+        stat(join(work, "cursor.mp4")),
+        stat(join(work, "timeline.json")),
+      ])
+      if (cursor.mtimeMs >= Math.max(source.mtimeMs, overlay.mtimeMs)) {
+        const cached = await probe(ffmpeg, join(work, "cursor.mp4"))
+        reuseCursor =
+          cached.frames === raw.frames &&
+          cached.width === raw.width &&
+          cached.height === raw.height
+      }
+    } catch {
+      // Missing or incomplete intermediates are safe to regenerate.
+    }
+  }
   console.log(
-    `Capture verified: ${raw.width}×${raw.height}, ${raw.frames} frames. Compositing cursor…`
+    `Capture verified: ${raw.width}×${raw.height}, ${raw.frames} frames. ${reuseCursor ? "Reusing cursor composite." : "Compositing cursor…"}`
   )
-  await compose(join(work, "raw.mp4"), timeline, join(work, "cursor.mp4"), {
-    crf: 12,
-  })
+  if (!reuseCursor) {
+    await compose(join(work, "raw.mp4"), timeline, join(work, "cursor.mp4"), {
+      crf: 12,
+    })
+  }
   const rendered = join(work, "rendered")
   await mkdir(rendered, { recursive: true })
   for (const shot of shots) {
@@ -165,7 +204,7 @@ async function main() {
       join(work, "cursor.mp4"),
       "-an",
       "-vf",
-      `${pictureFilter(shot, capture.fps)},${captionFilter(shot)}`,
+      `${pictureFilter(shot, capture.fps, capture)},${captionFilter(shot)}`,
       "-frames:v",
       String(Math.round(shot.duration * capture.fps)),
       "-c:v",
@@ -227,20 +266,32 @@ async function main() {
     "-i",
     finalMp4,
     "-vf",
-    "fps=12,scale=1280:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=3",
+    "fps=10,scale=1280:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle",
     "-loop",
     "0",
     join(rendered, `${name}.gif`),
   ])
+  const accepted = shots.find((shot) => shot.id === "accepted")!
+  const poster: Shot = {
+    ...accepted,
+    startFrame: accepted.endFrame - 1,
+    endFrame: accepted.endFrame,
+    duration: 1,
+    freeze: true,
+    isolate: capture.steps.find(
+      (step) => step.label === "Inspect accepted DFA result"
+    )!.boxes.workbench,
+    camera: [{ at: 0, pose: accepted.camera[0].pose }],
+  }
   await run(ffmpeg, [
     "-hide_banner",
     "-loglevel",
     "error",
     "-y",
-    "-ss",
-    "16.1",
     "-i",
-    finalMp4,
+    join(work, "cursor.mp4"),
+    "-vf",
+    `${pictureFilter(poster, capture.fps, capture)},${captionFilter(poster)}`,
     "-frames:v",
     "1",
     join(rendered, `${name}.png`),

@@ -14,12 +14,11 @@ A TypeScript web workbench providing three types of formal machines (formal lang
 
 ## Demo
 
-![Automata Workbench Demo](dfa-tscompiler/videos/automata-workbench-demo.gif)
-A high-definition 60 FPS recording is also available at [`dfa-tscompiler/videos/automata-workbench-demo.mp4`](dfa-tscompiler/videos/automata-workbench-demo.mp4).
+Click the image below to watch the video <br>
 
-## Notes
-
-**NOTE: the old version is at `backend`, but this version is no longer maintained and remanins for archive and reference purposes only. Refer to the files at `/dfa-tscompiler` for the new version. You can delete the files at `backend` if you do not plan to use the old version.**
+<a href="http://www.youtube.com/watch?feature=player_embedded&v=Fqa5ndFz7Sk" target="_blank">
+<img src="http://img.youtube.com/vi/Fqa5ndFz7Sk/maxresdefault.jpg" alt="Watch the video" width="1920" height="1080" />
+</a>
 
 ## Setup
 
@@ -64,8 +63,11 @@ npm run format
 npm run test:automata
 npm run test:parity
 npm run test:e2e
+npm run test:demo
+npm run demo:validate
 npm run demo:preview
 npm run demo:record
+npm run demo:render
 npm run build
 npm run preview
 ```
@@ -78,8 +80,11 @@ Command descriptions:
 - `test:automata` — Executes the TypeScript engine simulation test suite.
 - `test:parity` — Verifies TypeScript engines against the Python reference in `backend/`.
 - `test:e2e` — Runs automated Playwright browser tests for viewports, non-collision, and trace stepping.
-- `demo:preview` — Previews the scripted webreel browser demo in a visible browser window.
-- `demo:record` — Records the demo video and generates both MP4 and GIF using webreel.
+- `test:demo` — Checks showcase samples, safe camera bounds, scene cues, pacing, and loop continuity.
+- `demo:validate` — Validates the Webreel interaction config without recording.
+- `demo:preview` — Previews the interaction script in a visible browser (requires the dev server; camera moves are added during export).
+- `demo:record` — Records and exports the cinematic MP4, looping GIF, and poster.
+- `demo:render` — Re-exports camera moves and captions from the latest validated capture.
 - `build` — Checks types and compiles the production bundle with Vite.
 - `preview` — Serves the production build locally with Vite.
 

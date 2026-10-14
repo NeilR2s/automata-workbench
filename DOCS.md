@@ -29,14 +29,14 @@ The DFA engine evaluates inputs deterministically:
 The engine mechanically derives equivalent formal models from the source DFA definition:
 
 - **Right-linear CFG derivation**:
-  - Each DFA state maps to a non-terminal symbol.
-  - Each transition $\delta(A, a) = B$ maps to production $A \to aB$.
-  - Each accepting state includes the empty production $A \to \varepsilon$.
-  - The derivation engine uses breadth-first search with visited-state pruning to determine the leftmost derivation.
+    - Each DFA state maps to a non-terminal symbol.
+    - Each transition $\delta(A, a) = B$ maps to production $A \to aB$.
+    - Each accepting state includes the empty production $A \to \varepsilon$.
+    - The derivation engine uses breadth-first search with visited-state pruning to determine the leftmost derivation.
 - **Pushdown Automata (PDA) derivation**:
-  - Each transition reads an input symbol, inspects the stack top, and pushes state markers over bottom-of-stack $Z_0$.
-  - The simulator explores configuration tuples of `(state, input_position, stack)` using breadth-first search.
-  - Signature-based visited sets and queue depth caps guarantee termination on $\varepsilon$-transitions.
+    - Each transition reads an input symbol, inspects the stack top, and pushes state markers over bottom-of-stack $Z_0$.
+    - The simulator explores configuration tuples of `(state, input_position, stack)` using breadth-first search.
+    - Signature-based visited sets and queue depth caps guarantee termination on $\varepsilon$-transitions.
 
 ## Visualization and testing architecture
 
@@ -55,14 +55,14 @@ The visualizer renders interactive diagrams using pure React and SVG:
 The test suite validates stability through three separated layers:
 
 1. **Unit tests (`scripts/automata-tests.ts`)**:
-   - Executes table-driven test cases covering accepted patterns, rejected strings, and error states.
-   - Generates exhaustive strings up to fixed lengths to verify DFA, CFG, and PDA engine equivalence.
+    - Executes table-driven test cases covering accepted patterns, rejected strings, and error states.
+    - Generates exhaustive strings up to fixed lengths to verify DFA, CFG, and PDA engine equivalence.
 2. **Oracle parity tests (`scripts/parity.ts`)**:
-   - Invokes the Python reference engine in `backend/`.
-   - Validates that state sequences, final states, CFG derivations, and PDA stacks match the reference output exactly.
+    - Invokes the Python reference engine in `backend/`.
+    - Validates that state sequences, final states, CFG derivations, and PDA stacks match the reference output exactly.
 3. **End-to-end browser tests (`scripts/e2e-tests.ts`)**:
-   - Spawns headless Chromium via Playwright against the local preview build.
-   - Verifies responsive layout across Mobile (375px), Tablet (768px), and Desktop (1024px, 1280px) viewports.
-   - Asserts zero horizontal overflow (`scrollWidth <= clientWidth`).
-   - Asserts non-collision between heading and description bounding boxes.
-   - Verifies trace playback auto-scrolling keeps the active step within the visible scroll view.
+    - Spawns headless Chromium via Playwright against the local preview build.
+    - Verifies responsive layout across Mobile (375px), Tablet (768px), and Desktop (1024px, 1280px) viewports.
+    - Asserts zero horizontal overflow (`scrollWidth <= clientWidth`).
+    - Asserts non-collision between heading and description bounding boxes.
+    - Verifies trace playback auto-scrolling keeps the active step within the visible scroll view.

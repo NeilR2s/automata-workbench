@@ -1,14 +1,11 @@
 import { once } from "node:events"
-import { rename, writeFile } from "node:fs/promises"
+import { rename, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import {
   InteractionTimeline,
   Recorder,
   RecordingContext,
-  clickAt,
-  findElementBySelector,
-  findElementByText,
   launchChrome,
   moveCursorTo,
   pause,
@@ -21,6 +18,30 @@ import { createServer } from "vite"
 import type { VideoConfig } from "webreel"
 
 import type { Box, Capture, RecordedStep } from "./demo-director"
+
+class SmoothCursorTimeline extends InteractionTimeline {
+  override tickDuplicate() {
+    // GUI frames may repeat, but the composited cursor still advances at 60fps.
+    super.tick()
+  }
+}
+
+function clickModifiers(modifiers: string[] = []) {
+  const names = {
+    alt: "Alt",
+    ctrl: "Control",
+    control: "Control",
+    cmd: "Meta",
+    meta: "Meta",
+    shift: "Shift",
+    mod: "ControlOrMeta",
+  } as const
+  return modifiers.map((modifier) => {
+    const name = names[modifier.toLowerCase() as keyof typeof names]
+    if (!name) throw new Error(`Unknown click modifier: ${modifier}`)
+    return name
+  })
+}
 
 // Keep Webreel's downloaded Chrome and recording engine. Its 0.1.4 launcher
 // enables begin-frame control, which stalls Page.captureScreenshot in newer
@@ -35,7 +56,11 @@ async function managedChromePath() {
   return executable
 }
 
-function recordingClient(session: CDPSession, fps: number): CDPClient {
+function recordingClient(
+  session: CDPSession,
+  page: Page,
+  fps: number
+): CDPClient {
   let lastCapture = 0
   return {
     close: () => session.detach(),
@@ -50,16 +75,20 @@ function recordingClient(session: CDPSession, fps: number): CDPClient {
         new Promise<void>((resolve) => {
           session.once("Page.loadEventFired", () => resolve())
         }),
-      captureScreenshot: async (params) => {
+      captureScreenshot: async () => {
         const remaining = 1000 / fps - (performance.now() - lastCapture)
         if (remaining > 0) await pause(remaining)
         lastCapture = performance.now()
-        return session.send("Page.captureScreenshot", {
-          ...params,
-          format: "jpeg",
+        // Playwright owns the viewport's CDP session. Its screenshot API keeps
+        // physical-pixel capture and trusted pointer coordinates in sync.
+        const image = await page.screenshot({
+          type: "jpeg",
           quality: 95,
-          optimizeForSpeed: false,
+          scale: "device",
+          caret: "initial",
+          timeout: 10000,
         })
+        return { data: image.toString("base64") }
       },
     },
     Runtime: {
@@ -70,6 +99,10 @@ function recordingClient(session: CDPSession, fps: number): CDPClient {
     },
     Input: {
       dispatchMouseEvent: async (params) => {
+        if (params.type === "mouseMoved") {
+          await page.mouse.move(params.x, params.y)
+          return
+        }
         await session.send("Input.dispatchMouseEvent", {
           ...params,
           type: params.type as
@@ -171,7 +204,8 @@ async function measure(page: Page, zoom: number): Promise<Record<string, Box>> {
 async function verifyShowcase(page: Page, label?: string) {
   const expectations: Record<string, string> = {
     "Inspect accepted DFA result": 'Accepted "aaabaa".',
-    "Inspect rejected result": 'Rejected "ababaa".',
+    "Inspect rejected result":
+      "Simulation stopped: transition reached trap state q7.",
     "Inspect derived input string": 'Accepted "aaabaa".',
     "Inspect accepted PDA result": 'Accepted "aaabaa".',
   }
@@ -189,6 +223,13 @@ async function verifyShowcase(page: Page, label?: string) {
         'aside [data-step-active="true"]:not(:has(~ [data-step-active]))'
       )
       .waitFor()
+    const badge = await page
+      .locator("main > section > section > div:first-child > span:last-child")
+      .innerText()
+    const expectedBadge =
+      label === "Inspect rejected result" ? "Rejected" : "Accepted"
+    if (badge.toLowerCase() !== expectedBadge.toLowerCase())
+      throw new Error(`${label}: expected ${expectedBadge} badge, got ${badge}`)
   }
   if (label === "Inspect derived input string") {
     const form = await page
@@ -216,7 +257,8 @@ export async function captureDemo(
   root: string,
   work: string,
   config: VideoConfig,
-  configHash: string
+  configHash: string,
+  verifyFrame: (path: string) => Promise<void>
 ): Promise<Capture> {
   const baseUrl = config.baseUrl ?? "http://localhost:5173"
   const server = await ensureWorkbench(root, baseUrl)
@@ -248,11 +290,27 @@ export async function captureDemo(
     await page.evaluate("document.fonts.ready")
     await pause(300)
     const session = await page.context().newCDPSession(page)
-    const client = recordingClient(session, fps)
+    const client = recordingClient(session, page, fps)
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    const screenshot = await Promise.race([
+      client.Page.captureScreenshot({ format: "jpeg" }),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () =>
+            reject(
+              new Error("Chrome did not produce a frame within 10 seconds")
+            ),
+          10000
+        )
+      }),
+    ]).finally(() => clearTimeout(timeout))
+    const preflight = join(work, "preflight.jpg")
+    await writeFile(preflight, Buffer.from(screenshot.data, "base64"))
+    await verifyFrame(preflight)
     const context = new RecordingContext()
     context.setMode("record")
     context.setClickDwell(config.clickDwell ?? 120)
-    const timeline = new InteractionTimeline(width, height, {
+    const timeline = new SmoothCursorTimeline(width, height, {
       fps,
       zoom,
       initialCursor: { x: -40, y: -40 },
@@ -276,26 +334,32 @@ export async function captureDemo(
             break
           case "click":
           case "moveTo": {
-            const box = step.selector
-              ? await findElementBySelector(client, step.selector, step.within)
-              : await findElementByText(client, step.text!, step.within)
+            const scope = page.locator(step.within ?? "body")
+            const target = step.selector
+              ? scope.locator(step.selector).first()
+              : scope.getByText(step.text!, { exact: true }).first()
+            const box = await target.boundingBox()
             if (!box)
               throw new Error(`Target not found: ${step.selector ?? step.text}`)
+            await moveCursorTo(
+              context,
+              client,
+              box.x + box.width / 2,
+              box.y + box.height / 2
+            )
             if (step.action === "click") {
-              await clickAt(
-                context,
-                client,
-                box.x + box.width / 2,
-                box.y + box.height / 2,
-                step.modifiers
-              )
-            } else {
-              await moveCursorTo(
-                context,
-                client,
-                box.x + box.width / 2,
-                box.y + box.height / 2
-              )
+              if (!(await target.isEnabled()))
+                throw new Error(
+                  `Click target is disabled: ${step.selector ?? step.text}`
+                )
+              await pause(context.getClickDwellMs())
+              timeline.setCursorScale(0.75)
+              context.markEvent("click")
+              // Radix selects require a trusted pointer event chain. Webreel's
+              // synthetic JS click fallback can leave the menu open instead.
+              await target.click({ modifiers: clickModifiers(step.modifiers) })
+              await pause(120)
+              timeline.setCursorScale(1)
             }
             break
           }
@@ -357,7 +421,7 @@ export async function captureDemo(
     recorder = undefined
     const data = timeline.toJSON()
     await writeFile(join(work, "timeline.json"), JSON.stringify(data))
-    return {
+    const capture: Capture = {
       configHash,
       width,
       height,
@@ -365,9 +429,23 @@ export async function captureDemo(
       frameCount: data.frames.length,
       steps,
     }
+    await writeFile(
+      join(work, "capture.json"),
+      JSON.stringify(capture, null, 2)
+    )
+    return capture
   } finally {
-    if (recorder) await recorder.stop()
-    if (browser) await browser.close()
-    if (server) await server.close()
+    try {
+      if (recorder) {
+        await recorder.stop()
+        await rm(recorder.getTempVideoPath(), { force: true })
+      }
+    } finally {
+      try {
+        if (browser) await browser.close()
+      } finally {
+        if (server) await server.close()
+      }
+    }
   }
 }
